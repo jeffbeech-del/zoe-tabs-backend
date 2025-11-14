@@ -70,14 +70,18 @@ def download_youtube_audio(youtube_url: str) -> str:
     out_tmpl = os.path.join(tmp_dir, "audio.%(ext)s")
 
     # Use yt-dlp to get best audio as wav
-    cmd = [
-        "yt-dlp",
-        "-x",
-        "--audio-format", "wav",
-        "-o", out_tmpl,
-        youtube_url,
+   cmd = [
+    "yt-dlp",
+    "--cookies", "www.youtube.com_cookies.txt",
+    "--extractor-args", "youtube:player_client=default",
+    "--no-check-certificate",
+    "-x",
+    "--audio-format", "wav",
+    "-o", out_tmpl,
+    youtube_url,
     ]
-    subprocess.run(cmd, check=True)
+subprocess.run(cmd, check=True, timeout=25)
+
 
     # Find the resulting wav file
     for fname in os.listdir(tmp_dir):
