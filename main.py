@@ -9,17 +9,17 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Allow GitHub Pages frontend to call this API
+# Allow GitHub Pages frontend to call backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # lock later if you want
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ----------------------------
-# Data models
+# Models
 # ----------------------------
 
 class YouTubeRequest(BaseModel):
@@ -30,14 +30,15 @@ class TabResponse(BaseModel):
     chords: List[str]
     message: Optional[str] = None
 
+
 # ----------------------------
-# Download YouTube Audio (yt-dlp)
+# YouTube Downloader (yt-dlp)
 # ----------------------------
 
 def download_youtube_audio(youtube_url: str) -> str:
     """
-    Download WAV audio from YouTube using yt-dlp + cookies.
-    Uses Android client (2025 stable) and skip-web workaround.
+    Downloads YouTube audio as WAV using yt-dlp + cookies.
+    Uses the iOS YouTube client (the only one still working as of Nov 2025).
     """
 
     tmp_dir = tempfile.mkdtemp()
@@ -48,19 +49,25 @@ def download_youtube_audio(youtube_url: str) -> str:
     cmd = [
         "yt-dlp",
 
-        # cookie handling
+        # Cookie handling
         "--cookies", cookie_path,
 
-        # 2025 working settings
-        "--extractor-args", "youtube:player_client=android,player_skip=web",
-        "--compat-options", "no-youtube-unavailable-videos",
+        # Working YouTube client (as of Nov 2025)
+        "--extractor-args", "youtube:player_client=ios,player_skip=web",
 
-        # stabilizers for buggy videos
+        # Pretend to be the real iOS YouTube app
+        "--user-agent", "com.google.ios.youtube/19.45.3 (iPhone14,2; U; CPU iOS 17_5 like Mac OS X)",
+        "--add-header", "X-YouTube-Client-Name:5",
+        "--add-header", "X-YouTube-Client-Version:19.45.3",
+
+        # Anti-429 stability flags
+        "--compat-options", "no-youtube-unavailable-videos",
+        "--force-ipv4",
         "--no-check-certificate",
         "--no-overwrites",
         "--no-mtime",
 
-        # extract WAV
+        # Extract audio → WAV
         "-x",
         "--audio-format", "wav",
         "-o", out_tmpl,
@@ -68,23 +75,25 @@ def download_youtube_audio(youtube_url: str) -> str:
         youtube_url,
     ]
 
-    # run with 30 second limit
+    # Run yt-dlp with 30 second timeout
     subprocess.run(cmd, check=True, timeout=30)
 
-    # find wav file
+    # Find resulting WAV file
     for fname in os.listdir(tmp_dir):
         if fname.endswith(".wav"):
             return os.path.join(tmp_dir, fname)
 
-    raise RuntimeError("yt-dlp completed but no .wav produced")
+    raise RuntimeError("yt-dlp completed but no WAV file was produced.")
+
 
 # ----------------------------
-# Fake TAB generator (placeholder)
+# Fake TAB generator
 # ----------------------------
 
 def fake_generate_tabs(audio_path: str) -> tuple[List[str], str]:
     """
-    Placeholder until we add real AI transcription.
+    Placeholder tab generator.
+    Replace later with your actual AI model.
     """
     chords = ["C", "G", "Am", "F"]
     tab = (
@@ -95,33 +104,40 @@ def fake_generate_tabs(audio_path: str) -> tuple[List[str], str]:
     )
     return chords, tab
 
+
 # ----------------------------
-# API Routes
+# Routes
 # ----------------------------
 
 @app.get("/")
 def home():
     return {"status": "ok", "message": "Zoë Tabs Backend Running"}
 
-@app.post("/api/youtube-to-tabs", response_model=TabResponse)
-def youtube_to_tabs(req: YouTubeRequest) -> TabResponse:
 
-    # Step 1: attempt yt-dlp download
+@app.post("/api/youtube-to-tabs", response_model=TabResponse)
+def youtube_to_tabs(req: YouTubeRequest):
+    """
+    1. Downloads YouTube audio
+    2. Generates (fake) TAB + chords
+    3. Returns result
+    """
+
+    # Step 1 — Attempt yt-dlp download
     try:
-        wav = download_youtube_audio(req.youtube_url)
+        wav_path = download_youtube_audio(req.youtube_url)
 
     except subprocess.TimeoutExpired:
         return TabResponse(
             tab="",
             chords=[],
-            message="ERROR: yt-dlp timed out (>30s). Try shorter video."
+            message="ERROR: yt-dlp timeout (>30s). Try a shorter video."
         )
 
     except subprocess.CalledProcessError as e:
         return TabResponse(
             tab="",
             chords=[],
-            message=f"ERROR: yt-dlp failed (exit code {e.returncode})."
+            message=f"ERROR: yt-dlp failed (exit {e.returncode})."
         )
 
     except Exception as e:
@@ -131,13 +147,18 @@ def youtube_to_tabs(req: YouTubeRequest) -> TabResponse:
             message=f"ERROR: {str(e)}"
         )
 
-    # Step 2: generate fake tabs
+    # Step 2 — Generate demo ukulele tabs
     try:
-        chords, tab = fake_generate_tabs(wav)
-        return TabResponse(tab=tab, chords=chords, message="OK")
+        chords, tab = fake_generate_tabs(wav_path)
+        return TabResponse(
+            tab=tab,
+            chords=chords,
+            message="OK"
+        )
+
     except Exception as e:
         return TabResponse(
             tab="",
             chords=[],
-            message=f"ERROR generating tabs: {str(e)}"
+            message=f"ERROR (tab generator): {str(e)}"
         )
