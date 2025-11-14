@@ -1,7 +1,7 @@
 import os
 import tempfile
 import subprocess
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,49 +9,51 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Allow your GitHub Pages site to call this API
+# Allow your GitHub Pages frontend to call this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # You can lock this later
+    allow_origins=["*"],  # you can lock this to your domain later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 # ----------------------------
-# DATA MODELS
+# Data models
 # ----------------------------
 
 class YouTubeRequest(BaseModel):
     youtube_url: str
 
+
 class TabResponse(BaseModel):
     tab: str
-    chords: list[str]
+    chords: List[str]
     message: Optional[str] = None
 
+
 # ----------------------------
-# YOUTUBE AUDIO DOWNLOAD
+# YouTube audio download
 # ----------------------------
 
 def download_youtube_audio(youtube_url: str) -> str:
     """
-    Downloads YouTube audio using yt-dlp as WAV.
-    Returns filepath to the WAV file.
+    Download YouTube audio as a WAV file using yt-dlp and cookies.
+    Returns path to the downloaded WAV file.
     """
 
     # Temporary folder for output
     tmp_dir = tempfile.mkdtemp()
     out_tmpl = os.path.join(tmp_dir, "audio.%(ext)s")
 
-    # Absolute path to cookies file
+    # Absolute path to cookies file in the same folder as this script
     cookie_path = os.path.join(os.path.dirname(__file__), "www.youtube.com_cookies.txt")
 
-    # yt-dlp command
     cmd = [
         "yt-dlp",
         "--cookies", cookie_path,
-        "--extractor-args", "youtube:player_client=default",
+        "--extractor-args", "youtube:player_client=tv,player_skip=web",
         "--no-check-certificate",
         "-x",
         "--audio-format", "wav",
@@ -59,60 +61,84 @@ def download_youtube_audio(youtube_url: str) -> str:
         youtube_url,
     ]
 
-    # Run downloader
-    subprocess.run(cmd, check=True, timeout=25)
+    # Run downloader with 30s timeout
+    subprocess.run(cmd, check=True, timeout=30)
 
-    # Find the resulting WAV file
+    # Find resulting WAV file
     for fname in os.listdir(tmp_dir):
         if fname.endswith(".wav"):
             return os.path.join(tmp_dir, fname)
 
     raise RuntimeError("No wav file produced by yt-dlp")
 
-# ----------------------------
-# (FAKE) TAB GENERATOR
-# ----------------------------
-
-def fake_generate_tabs(wav_path: str):
-    """
-    Placeholder TAB generator.
-    Replace later with a real model.
-    """
-    chords = ["C", "G", "Am", "F"]
-    tab = "(fake ukulele tab here)"
-    return chords, tab
 
 # ----------------------------
-# API ROUTES
+# Temporary fake TAB generator
+# ----------------------------
+
+def fake_generate_tabs(audio_path: str) -> tuple[List[str], str]:
+    """
+    Placeholder tab generator.
+    Replace this with a real model later.
+    """
+    demo_chords = ["C", "G", "Am", "F"]
+    demo_tab = (
+        "A|-----0-----------0-----------|\n"
+        "E|---3---3-------3---3---------|\n"
+        "C|-0-------0---2-------2-------|\n"
+        "G|-----------------------------|\n"
+    )
+    return demo_chords, demo_tab
+
+
+# ----------------------------
+# Routes
 # ----------------------------
 
 @app.get("/")
-def home():
-    return {"status": "OK", "message": "Zoë Tabs Backend Running"}
+def root():
+    return {"status": "ok", "message": "Zoë Tabs AI backend is running."}
+
 
 @app.post("/api/youtube-to-tabs", response_model=TabResponse)
-def youtube_to_tabs(req: YouTubeRequest):
-
+def youtube_to_tabs(req: YouTubeRequest) -> TabResponse:
+    """
+    Main endpoint:
+    1. Download YouTube audio with yt-dlp
+    2. Generate (fake for now) ukulele tab + chords
+    3. Return JSON
+    """
     try:
-        wav_file = download_youtube_audio(req.youtube_url)
+        wav_path = download_youtube_audio(req.youtube_url)
+    except subprocess.TimeoutExpired:
+        return TabResponse(
+            tab="",
+            chords=[],
+            message="ERROR (downloader): yt-dlp timed out (over 30s). Try a shorter video."
+        )
+    except subprocess.CalledProcessError as e:
+        return TabResponse(
+            tab="",
+            chords=[],
+            message=f"ERROR (downloader): yt-dlp failed with exit code {e.returncode}."
+        )
     except Exception as e:
         return TabResponse(
             tab="",
             chords=[],
-            message=f"ERROR (downloader): {str(e)}"
+            message=f"ERROR (downloader): {e}"
         )
 
     try:
-        chords, tab = fake_generate_tabs(wav_file)
-        return TabResponse(tab=tab, chords=chords, message="OK")
-
+        chords, tab = fake_generate_tabs(wav_path)
+        return TabResponse(
+            tab=tab,
+            chords=chords,
+            message="OK (demo TAB – AI transcription coming next)."
+        )
     except Exception as e:
         return TabResponse(
             tab="",
             chords=[],
-            message=f"ERROR (tab generator): {str(e)}"
+            message=f"ERROR (tab generator): {e}"
         )
-
-# ----------------------------
-# END OF FILE
-# ----------------------------
